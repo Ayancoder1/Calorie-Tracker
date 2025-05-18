@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calorie Tracker App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+            font-family: 'Inter', sans-serif;
+        }
+        .card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+        }
+        .upload-btn, .capture-btn {
+            background: linear-gradient(to right, #4f46e5, #7c3aed);
+        }
+        .upload-btn:hover, .capture-btn:hover {
+            background: linear-gradient(to right, #4338ca, #6d28d9);
+        }
+        #video {
+            display: none;
+            width: 100%;
+            max-width: 500px;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+        #previewImage {
+            max-width: 100%;
+            max-height: 300px;
+            object-fit: contain;
+        }
+        @media (max-width: 640px) {
+            .card-grid {
+                grid-template-columns: 1fr;
+            }
+            #previewImage {
+                max-height: 200px;
+            }
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            color: #4f46e5;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center p-4 sm:p-8">
+    <div class="max-w-4xl w-full">
+        <h1 class="text-3xl sm:text-4xl font-bold text-center text-gray-800 mb-8">Calorie Tracker</h1>
+
+
+    <!-- Upload and Capture Section -->
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
+        <div class="flex flex-col sm:flex-row gap-4 mb-4">
+            <input type="file" id="fileInput" accept="image/*" class="hidden">
+            <button id="uploadBtn" class="upload-btn text-white font-semibold py-3 px-6 rounded-lg flex-1">Upload Food Photo</button>
+            <button id="captureBtn" class="capture-btn text-white font-semibold py-3 px-6 rounded-lg flex-1">Capture Photo</button>
+        </div>
+        <div id="loading" class="loading">Processing...</div>
+        <video id="video" autoplay></video>
+        <canvas id="canvas" class="hidden"></canvas>
+        <div id="preview" class="flex justify-center mb-4">
+            <img id="previewImage" class="rounded-lg shadow-md hidden" alt="Food Preview">
+        </div>
+    </div>
+
+    <!-- Calorie Cards -->
+    <div id="calorieCards" class="card-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Cards will be dynamically added here -->
+    </div>
+</div>
+
+<script>
+    // API Keys
+    const IMGBB_API_KEY = '640a24704a7308973e7892c7b5c7c4a7';
+    const GROK_API_KEY = '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';
+
+    // DOM Elements
+    const fileInput = document.getElementById('fileInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const captureBtn = document.getElementById('captureBtn');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const previewImage = document.getElementById('previewImage');
+    const calorieCards = document.getElementById('calorieCards');
+    const loading = document.getElementById('loading');
+
+    // Handle Upload Button
+    uploadBtn.addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const imageUrl = URL.createObjectURL(file);
+            previewImage.src = imageUrl;
+            previewImage.classList.remove('hidden');
+            await processImage(file);
+        }
+    });
+
+    // Handle Camera Capture
+    let stream = null;
+    captureBtn.addEventListener('click', async () => {
+        if (video.style.display === 'none') {
+            // Start camera
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                video.style.display = 'block';
+                captureBtn.textContent = 'Take Photo';
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+                alert('Could not access camera. Please check permissions.');
+            }
+        } else {
+            // Capture photo
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            const imageDataUrl = canvas.toDataURL('image/jpeg');
+            previewImage.src = imageDataUrl;
+            previewImage.classList.remove('hidden');
+            video.style.display = 'none';
+            captureBtn.textContent = 'Capture Photo';
+            stream.getTracks().forEach(track => track.stop());
+            stream = null;
+
+            // Convert data URL to Blob for upload
+            const blob = await (await fetch(imageDataUrl)).blob();
+            const file = new File([blob], 'captured_image.jpg', { type: 'image/jpeg' });
+            await processImage(file);
+        }
+    });
+
+    // Process Image: Upload to ImgBB and Analyze with Grok API
+    async function processImage(file) {
+        loading.style.display = 'block';
+        try {
+            // Step 1: Upload to ImgBB
+            const formData = new FormData();
+            formData.append('image', file);
+            const imgbbResponse = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, {
+                method: 'POST',
+                body: formData
+            });
+            const imgbbData = await imgbbResponse.json();
+            if (!imgbbData.success) throw new Error('ImgBB upload failed');
+            const imageUrl = imgbbData.data.url;
+
+            // Update preview with final image URL
+            previewImage.src = imageUrl;
+            previewImage.classList.remove('hidden');
+
+            // Step 2: Call Grok API
+            const grokResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${GROK_API_KEY}`
+                },
+                body: JSON.stringify({
+                    messages: [
+                        {
+                            role: 'user',
+                            content: [
+                                {
+                                    type: 'text',
+                                    text: 'Give calories of each item in this image in this below JSON format only\n {items:[{item_name:name of item, total_calories:in gm, total_protien:in gm , toal_carbs: in gm ,toal_fats:in gm},...]}'
+                                },
+                                {
+                                    type: 'image_url',
+                                    image_url: { url: imageUrl }
+                                }
+                            ]
+                        }
+                    ],
+                    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                    temperature: 1,
+                    max_completion_tokens: 1024,
+                    top_p: 1,
+                    stream: false,
+                    response_format: { type: 'json_object' },
+                    stop: null
+                })
+            });
+            const grokData = await grokResponse.json();
+            const items = JSON.parse(grokData.choices[0].message.content).items;
+
+
+            // Step 3: Add cards for each item
+            items.forEach(item => addCalorieCard(item));
+        } catch (error) {
+            console.error('Error processing image:', error);
+            alert('Failed to process image. Please try again.');
+        } finally {
+            loading.style.display = 'none';
+        }
+    }
+
+    // Add Calorie Card (without image)
+    function addCalorieCard(item) {
+        const card = document.createElement('div');
+        card.className = 'card bg-white rounded-lg shadow-lg p-4';
+        card.innerHTML = `
+            <h2 class="text-xl font-semibold text-gray-800 mb-2">${item.item_name}</h2>
+            <p class="text-gray-600"><span class="font-bold">Calories:</span> ${item.total_calories} kcal</p>
+            <p class="text-gray-600"><span class="font-bold">Protein:</span> ${item.total_protein}g</p>
+            <p class="text-gray-600"><span class="font-bold">Carbs:</span> ${item.total_carbs}g</p>
+            <p class="text-gray-600"><span class="font-bold">Fat:</span> ${item.total_fats}g</p>
+        `;
+        calorieCards.prepend(card);
+    }
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+        }
+    });
+</script>
+
+
+</body>
+</html>
